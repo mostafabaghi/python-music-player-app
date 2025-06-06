@@ -1,11 +1,11 @@
+import os
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
 import pygame
 from mutagen.mp3 import MP3
+from mutagen.id3 import ID3
 from io import BytesIO
-import requests
-import threading
 
 class MusicPlayer:
     def __init__(self, root):
@@ -15,57 +15,49 @@ class MusicPlayer:
         self.root.configure(bg="#1e1e1e")
 
         pygame.mixer.init()
-        self.track_list = self.load_urls()
+        self.music_dir = "Musics"
+        self.track_list = self.load_local_tracks()
         self.track_index = 0
         self.is_playing = False
         self.current_track_length = 0
 
         self.setup_ui()
-        self.load_track()
+        if self.track_list:
+            self.load_track()
 
-    def load_urls(self):
-        with open("urls.txt", "r") as f:
-            return [line.strip() for line in f.readlines() if line.strip() and not line.startswith("#")]
+    def load_local_tracks(self):
+        if not os.path.exists(self.music_dir):
+            os.makedirs(self.music_dir)
+        return [os.path.join(self.music_dir, f) for f in os.listdir(self.music_dir) if f.endswith(".mp3")]
 
     def load_track(self):
-        url = self.track_list[self.track_index]
-        threading.Thread(target=self.prepare_track, args=(url,)).start()
+        filepath = self.track_list[self.track_index]
+        pygame.mixer.music.load(filepath)
+        audio = MP3(filepath)
 
-    def prepare_track(self, url):
-        self.set_status("Loading...")
+        self.current_track_length = int(audio.info.length)
+        self.progress_slider.config(to=self.current_track_length)
+        self.duration_label.config(text=self.format_time(self.current_track_length))
+
+        # Load cover if exists
+        self.load_cover(filepath)
+
+        self.track_info.config(text=os.path.basename(filepath))
+        self.play()
+
+    def load_cover(self, filepath):
         try:
-            response = requests.get(url)
-            audio_data = BytesIO(response.content)
-
-            pygame.mixer.music.load(audio_data)
-            audio = MP3(audio_data)
-
-            self.current_track_length = int(audio.info.length)
-            self.progress_slider.config(to=self.current_track_length)
-            self.duration_label.config(text=self.format_time(self.current_track_length))
-
-            img_data = None
-            if "APIC:" in audio.tags:
-                img_data = audio.tags["APIC:"].data
-            elif any("APIC" in key for key in audio.tags.keys()):
-                for key in audio.tags:
-                    if "APIC" in key:
-                        img_data = audio.tags[key].data
-                        break
-
-            if img_data:
-                image = Image.open(BytesIO(img_data)).resize((200, 200))
-                photo = ImageTk.PhotoImage(image)
-                self.cover_label.config(image=photo)
-                self.cover_label.image = photo
-            else:
-                self.cover_label.config(image="", text="🎵", font=("Arial", 80), fg="gray")
-
-            self.track_info.config(text=url.split("/")[-1])
-            self.play()
-
-        except Exception as e:
-            self.set_status(f"Error: {e}")
+            audio = MP3(filepath, ID3=ID3)
+            for tag in audio.tags.values():
+                if tag.FrameID == "APIC":
+                    image = Image.open(BytesIO(tag.data)).resize((200, 200))
+                    photo = ImageTk.PhotoImage(image)
+                    self.cover_label.config(image=photo)
+                    self.cover_label.image = photo
+                    return
+            raise Exception("No cover found")
+        except:
+            self.cover_label.config(image="", text="🎵", font=("Arial", 80), fg="gray")
 
     def setup_ui(self):
         self.cover_label = tk.Label(self.root, bg="#1e1e1e")
